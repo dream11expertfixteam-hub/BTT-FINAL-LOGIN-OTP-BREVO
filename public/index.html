@@ -1,0 +1,103 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BEST TRADERS TEAM</title><style>
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Arial,sans-serif;background:#050505;color:#fff}nav{position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;padding:15px 6%;background:#0b0b0bf5;border-bottom:1px solid #292929}.brand{font-weight:900;color:#f4c400;letter-spacing:.7px}nav a{color:#ddd;text-decoration:none;margin-left:18px;font-size:14px}.navbtn{border:1px solid #333;background:#151515;color:#fff;padding:9px 14px;border-radius:9px;cursor:pointer}.hero{min-height:82vh;display:grid;place-items:center;text-align:center;padding:50px 7%;background:radial-gradient(circle,#1a1a1a,#050505 62%)}.logo{width:min(270px,68vw);border-radius:50%;box-shadow:0 0 45px #f4c40033}h1{font-size:clamp(38px,7vw,72px);line-height:1.03;margin:24px 0 14px}.gold{color:#f4c400}.hero p{max-width:720px;margin:0 auto 25px;color:#aaa;font-size:18px;line-height:1.6}.btn{display:inline-block;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:800;margin:6px;background:#f4c400;color:#111;border:0;cursor:pointer}.btn.secondary{background:#151515;color:#fff;border:1px solid #333}section{max-width:1150px;margin:auto;padding:70px 7%}.title{text-align:center;font-size:34px;margin:0 0 35px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:18px}.card{padding:26px;border:1px solid #292929;background:#101010;border-radius:16px}.card h3{margin-top:0;color:#f4c400}.card p{color:#aaa;line-height:1.55}.price{font-size:32px;font-weight:900;margin:12px 0}.calls{overflow:auto}.call{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr;gap:10px;padding:14px;border-bottom:1px solid #252525;min-width:600px}.call.head{color:#f4c400;font-weight:800}.tag{padding:5px 9px;border-radius:20px;background:#171717;display:inline-block;font-size:12px}.dashboard{background:#0b0b0b;border-top:1px solid #222;border-bottom:1px solid #222}.hidden{display:none}.modal{position:fixed;inset:0;background:#000b;z-index:50;display:grid;place-items:center;padding:20px}.box{width:min(430px,100%);background:#111;border:1px solid #333;border-radius:18px;padding:28px}.box input{width:100%;padding:13px;margin:8px 0;background:#080808;color:#fff;border:1px solid #333;border-radius:9px}.close{float:right;background:none;border:0;color:#aaa;font-size:22px;cursor:pointer}.disclaimer{padding:28px 7%;text-align:center;color:#777;font-size:12px;line-height:1.6}footer{padding:24px;text-align:center;background:#0b0b0b;color:#666;font-size:13px}.status{color:#f4c400;font-weight:700}@media(max-width:700px){nav{align-items:flex-start;gap:10px;flex-direction:column}nav a{margin:0 10px 0 0}.call{grid-template-columns:100px 110px 110px 110px}}
+</style></head><body>
+<nav><div class="brand">BEST TRADERS TEAM</div><div><a href="#markets">Markets</a><a href="#calls">Calls</a><a href="#plans">Plans</a><a href="#dashboard">Dashboard</a><button class="navbtn" onclick="openAuth('login')">Login</button></div></nav>
+<header class="hero"><div><img class="logo" src="logo.png" alt="BEST TRADERS TEAM logo"><h1>Trade Smarter with <span class="gold">BEST TRADERS TEAM</span></h1><p>Market updates, educational insights and technical analysis for MCX, NIFTY, BANKNIFTY and FOREX.</p><a class="btn" href="https://t.me/stockmarkets_calls" target="_blank" rel="noopener">Join Telegram</a><a class="btn secondary" href="#plans">View Plans</a></div></header>
+<section id="markets"><h2 class="title">Markets We Cover</h2><div class="grid"><div class="card"><h3>MCX</h3><p>Commodity-market information and educational analysis.</p></div><div class="card"><h3>NIFTY</h3><p>Index-focused market observations and important levels.</p></div><div class="card"><h3>BANKNIFTY</h3><p>Market observations and educational setups.</p></div><div class="card"><h3>FOREX</h3><p>Currency-market information and analysis.</p></div></div></section>
+<section id="calls"><h2 class="title">Latest Market Calls</h2><div class="card calls"><div class="call head"><div>Market</div><div>Type</div><div>Entry</div><div>Status</div></div><div id="callsList"><div class="call"><div>Loading…</div><div>—</div><div>—</div><div>—</div></div></div></div><p style="color:#777;font-size:12px">Educational/informational content only. Do your own research before making financial decisions.</p></section>
+<section id="plans"><h2 class="title">Membership Plans</h2><div class="grid"><div class="card"><h3>FREE</h3><div class="price">₹0</div><p>Free market updates and educational content.</p><button class="btn secondary" onclick="openAuth('signup')">Create Account</button></div><div class="card"><h3>PREMIUM</h3><div class="price">₹1,499<span style="font-size:16px;color:#aaa"> / month</span></div><p>Member-only educational content and market updates.</p><button class="btn" onclick="requestPremium()">Get Premium</button></div></div></section>
+<section id="dashboard" class="dashboard"><h2 class="title">Member Dashboard</h2><div class="card"><p id="welcome">You are browsing as a guest.</p><p id="premiumStatus"></p><button class="btn" onclick="openAuth('login')">Login / Sign Up</button><button class="btn secondary" onclick="logout()">Logout</button></div></section>
+<section id="payment" style="text-align:center"><h2 class="title">Premium Payment</h2><div class="card" style="max-width:520px;margin:auto"><h3>₹1,499 / month</h3><p>After logging in, scan the QR code using your UPI app and then tap “I Have Paid”. Your payment request will be sent to the admin for manual verification.</p><img src="upi_qr.png" alt="UPI payment QR code" style="width:min(330px,90%);border-radius:12px;margin:18px auto;background:#fff;padding:8px"><br><button class="btn" onclick="requestPremium()">I HAVE PAID — SUBMIT FOR VERIFICATION</button><p style="font-size:12px;color:#777;margin-top:16px">Never share your UPI PIN or OTP.</p></div></section>
+<div class="disclaimer">Trading involves risk. Past performance does not guarantee future results. This website is for informational and educational purposes and is not financial advice.</div><footer>© 2026 BEST TRADERS TEAM · All rights reserved</footer>
+<div id="authModal" class="modal hidden"><div class="box"><button class="close" onclick="closeAuth()">×</button><h2 id="authTitle">Login</h2><input id="authName" placeholder="Your name"><input id="authEmail" type="email" placeholder="Email"><input id="authPassword" type="password" placeholder="Password (8+ characters)"><input id="authOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit OTP" style="display:none"><button class="btn" onclick="submitAuth()" id="authButton">Login</button><button class="btn secondary" onclick="resendOtp()" id="resendButton" style="display:none">Resend OTP</button><button class="btn secondary" onclick="toggleAuth()" id="switchButton">Create account</button><p id="authMessage" style="color:#aaa"></p></div></div>
+<script>
+let authMode='login';
+let otpStep=false;
+let otpEmail='';
+let otpResendTimer=null;
+const $=id=>document.getElementById(id);
+function openAuth(mode='login'){authMode=mode;otpStep=false;updateAuthUI();$('authModal').classList.remove('hidden');$('authModal').style.display='grid'}
+function closeAuth(){if(otpResendTimer)clearTimeout(otpResendTimer);$('authModal').classList.add('hidden');$('authModal').style.display='none'}
+function toggleAuth(){authMode=authMode==='login'?'signup':'login';otpStep=false;updateAuthUI()}
+function updateAuthUI(){const signup=authMode==='signup';$('authTitle').textContent=signup?(otpStep?'Verify your email':'Create account'):'Login';$('authName').style.display=signup&&!otpStep?'block':'none';$('authEmail').style.display=(!signup||!otpStep)?'block':'none';$('authPassword').style.display=(!signup||!otpStep)?'block':'none';$('authOtp').style.display=signup&&otpStep?'block':'none';$('authButton').textContent=signup?(otpStep?'Verify & Create Account':'Send OTP'):'Login';$('resendButton').style.display=signup&&otpStep?'inline-block':'none';$('switchButton').style.display=signup&&otpStep?'none':'inline-block';$('switchButton').textContent=signup?'I already have an account':'Create account';$('authMessage').textContent=''}
+async function api(url,opts={}){
+  const token=localStorage.getItem('btt_token');
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),15000);
+  try{
+    const r=await fetch(url,{credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{}),...(opts.headers||{})},...opts,signal:controller.signal});
+    const text=await r.text();
+    let d={};
+    try{d=text?JSON.parse(text):{}}catch{}
+    if(!r.ok)throw Error(d.error||`Request failed (${r.status})`);
+    return d;
+  }finally{clearTimeout(timer)}
+}
+async function submitAuth(){
+  const button=$('authButton');
+  const message=$('authMessage');
+  try{
+    button.disabled=true;
+    if(authMode==='signup' && !otpStep){
+      message.textContent='Sending OTP…';
+      const body={name:$('authName').value.trim(),email:$('authEmail').value.trim(),password:$('authPassword').value};
+      const d=await api('/api/signup/send-otp',{method:'POST',body:JSON.stringify(body)});
+      otpEmail=body.email.toLowerCase();
+      otpStep=true;
+      updateAuthUI();
+      message.textContent=d.message||'OTP sent to your email.';
+      $('authOtp').focus();
+      startOtpResendCountdown(60);
+      return;
+    }
+    if(authMode==='signup' && otpStep){
+      message.textContent='Verifying OTP…';
+      const d=await api('/api/signup/verify-otp',{method:'POST',body:JSON.stringify({email:otpEmail||$('authEmail').value.trim(),otp:$('authOtp').value.trim()})});
+      if(!d || !d.user)throw Error('Account created but no user session was returned.');
+      if(d.token)localStorage.setItem('btt_token',d.token);
+      updateUser(d.user);
+      $('authModal').classList.add('hidden');$('authModal').style.display='none';
+      message.textContent='';
+      window.location.hash='dashboard';
+      $('dashboard').scrollIntoView({behavior:'smooth',block:'start'});
+      return;
+    }
+    message.textContent='Logging in…';
+    const body={email:$('authEmail').value.trim(),password:$('authPassword').value};
+    const d=await api('/api/login',{method:'POST',body:JSON.stringify(body)});
+    if(!d || !d.user)throw Error('Login succeeded but no user session was returned.');
+    if(d.token)localStorage.setItem('btt_token',d.token);
+    updateUser(d.user);
+    if(d.user.role==='admin'){window.location.assign('/admin');return;}
+    $('authModal').classList.add('hidden');$('authModal').style.display='none';message.textContent='';window.location.hash='dashboard';$('dashboard').scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){
+    message.textContent=e.name==='AbortError'?'Request timed out. Please try again.':(e.message||'Unable to process request.');
+  }finally{button.disabled=false;}
+}
+async function resendOtp(){
+  const message=$('authMessage');
+  try{
+    $('resendButton').disabled=true;
+    const body={name:$('authName').value.trim(),email:otpEmail||$('authEmail').value.trim(),password:$('authPassword').value};
+    const d=await api('/api/signup/send-otp',{method:'POST',body:JSON.stringify(body)});
+    message.textContent=d.message||'OTP sent.';
+    startOtpResendCountdown(60);
+  }catch(e){message.textContent=e.message||'Unable to resend OTP.';$('resendButton').disabled=false;}
+}
+function startOtpResendCountdown(seconds){
+  if(otpResendTimer)clearTimeout(otpResendTimer);
+  let remaining=seconds;
+  $('resendButton').disabled=true;
+  $('resendButton').textContent=`Resend OTP (${remaining}s)`;
+  const tick=()=>{remaining--;if(remaining<=0){$('resendButton').disabled=false;$('resendButton').textContent='Resend OTP';return;}$('resendButton').textContent=`Resend OTP (${remaining}s)`;otpResendTimer=setTimeout(tick,1000)};
+  otpResendTimer=setTimeout(tick,1000);
+}
+
+async function logout(){await api('/api/logout',{method:'POST'});updateUser(null)}
+function updateUser(u){$('welcome').textContent=u?`Welcome, ${u.name}. Email: ${u.email}`:'You are browsing as a guest.';$('premiumStatus').innerHTML=u&&u.premium_until?`Premium: <span class="status">Active until ${u.premium_until}</span>`:u?'Premium: <span style="color:#aaa">Not active</span>':''}
+async function loadMe(){try{const d=await api('/api/me');updateUser(d.user)}catch{}}
+async function loadCalls(){try{const rows=await api('/api/calls');$('callsList').innerHTML=rows.length?rows.map(x=>`<div class="call"><div>${escapeHtml(x.market)}</div><div><span class="tag">${escapeHtml(x.type)}</span></div><div>${escapeHtml(x.entry||'—')}</div><div>${escapeHtml(x.status||'Published')}</div></div>`).join(''):'<div class="call"><div>No calls published yet.</div><div>—</div><div>—</div><div>—</div></div>'}catch(e){$('callsList').innerHTML='<div class="call"><div>Unable to load calls.</div><div>—</div><div>—</div><div>—</div></div>'}}
+function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+async function requestPremium(){try{const me=await api('/api/me');if(!me.user){openAuth('login');$('authMessage').textContent='Please login first.';return}if(me.user.role==='admin'){alert('Admin account does not need premium membership.');return}location.hash='payment';const d=await api('/api/payment-request',{method:'POST'});alert(d.status==='pending'?'Payment submitted. Admin will verify it manually.':'Payment request submitted.')}catch(e){alert(e.message)}}
+updateAuthUI();loadMe();loadCalls();
+</script></body></html>
