@@ -1,29 +1,45 @@
-# BEST TRADERS TEAM — Vercel + Neon + Brevo Email OTP
-otp deploy update
-This version keeps the working Postgres/Neon authentication and adds email verification for account creation using Brevo transactional email API.
+# BEST TRADERS TEAM — All Features
 
-## Vercel environment variables
+This build preserves the working Neon/Postgres authentication, Brevo email OTP signup, login/logout, sessions and admin access, and adds the requested trading, wallet and admin features.
 
-Keep your existing values:
+## Trading
+Admin can create/edit/close calls for:
+- Individual shares/stocks (examples: RELIANCE, TCS, HDFCBANK, INFY, SBIN)
+- NIFTY / BANKNIFTY and other indexes
+- MCX
+- FOREX
 
-- `DATABASE_URL`
-- `SESSION_SECRET`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
+Each call supports Buy/Sell, Entry, Stop Loss, Target 1/2/3 and status: Active, Target Hit, SL Hit, Closed.
 
-Add these three:
+## Wallet
+- Server-side balance
+- Credit/debit transaction ledger
+- Deposit and withdrawal status
+- Atomic withdrawal debit and insufficient-balance protection
 
-- `BREVO_API_KEY` — your Brevo API key
-- `BREVO_SENDER_EMAIL` — an email sender verified in Brevo
-- `BREVO_SENDER_NAME` — e.g. `BEST TRADERS TEAM`
+## Deposits
+- Amount
+- UTR/reference
+- Payment screenshot
+- Duplicate UTR protection
+- Admin approve/reject
+- Approved deposits credit wallet automatically
 
-Brevo's transactional email API uses `POST https://api.brevo.com/v3/smtp/email` and requires an API key plus a registered/verified sender.
+## Withdrawals
+- Saved bank details
+- Amount request
+- Pending/approved/rejected
+- Admin approval atomically debits wallet
+- Insufficient balance protection
 
-## Signup flow
+## Notifications
+New calls, deposit/withdrawal decisions, premium updates and admin broadcasts.
 
-1. User opens Create Account.
-2. User enters name, email and password.
-3. Site sends a 6-digit OTP to the email through Brevo.
-4. OTP is valid for 10 minutes and has a maximum of 5 incorrect attempts.
-5. After successful verification, the account is created in Neon and the user is logged in.
-6. Resend is rate-limited to once per 60 seconds.
+## Security
+OTP/login rate limiting, admin-only endpoints, audit log, duplicate UTR checks, server-side wallet operations and protected bank data access.
+
+## Required Vercel environment variables
+Keep the existing:
+`DATABASE_URL`, `SESSION_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`.
+
+Do not replace working secret values. After deploying code, redeploy the Vercel project so the new server code is active.

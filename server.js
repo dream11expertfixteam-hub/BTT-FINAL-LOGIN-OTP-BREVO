@@ -64,12 +64,78 @@ async function initDb() {
         last_sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+      await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS stop_loss TEXT`;
+      await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS target1 TEXT`;
+      await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS target2 TEXT`;
+      await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS target3 TEXT`;
+      await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS asset_type TEXT DEFAULT 'Stock'`;
+      await sql`CREATE TABLE IF NOT EXISTS wallets (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        balance NUMERIC(14,2) NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS transactions (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        amount NUMERIC(14,2) NOT NULL,
+        status TEXT NOT NULL DEFAULT 'completed',
+        reference TEXT UNIQUE,
+        description TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS deposits (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        amount NUMERIC(14,2) NOT NULL,
+        utr TEXT NOT NULL UNIQUE,
+        screenshot TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        reviewed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS bank_details (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        account_name TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        ifsc TEXT NOT NULL,
+        bank_name TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS withdrawals (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        amount NUMERIC(14,2) NOT NULL,
+        bank_snapshot TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        reviewed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS notifications (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'info',
+        read_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        actor_id TEXT,
+        actor_role TEXT,
+        action TEXT NOT NULL,
+        entity_type TEXT,
+        entity_id TEXT,
+        details TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
     })().catch(err => { dbReady = null; throw err; });
   }
   return dbReady;
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '6mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -115,6 +181,35 @@ function admin(req, res, next) {
   next();
 }
 function normalizeEmail(email) { return String(email || '').trim().toLowerCase(); }
+function cleanText(value, max=500) { return String(value ?? '').trim().slice(0,max); }
+function isValidAmount(value) {
+  const n=Number(value);
+  return Number.isFinite(n) && n>0 && n<=10000000 && Math.round(n*100)===n*100;
+}
+async function ensureWallet(userId) {
+  await sql`INSERT INTO wallets(user_id,balance) VALUES(${Number(userId)},0) ON CONFLICT(user_id) DO NOTHING`;
+}
+async function notifyUser(userId,title,message,kind='info') {
+  await sql`INSERT INTO notifications(user_id,title,message,kind) VALUES(${Number(userId)},${cleanText(title,120)},${cleanText(message,1000)},${kind})`;
+}
+async function notifyAllUsers(title,message,kind='broadcast') {
+  await sql`INSERT INTO notifications(user_id,title,message,kind)
+            SELECT id,${cleanText(title,120)},${cleanText(message,1000)},${kind} FROM users`;
+}
+const rateBuckets = new Map();
+function rateLimit(key,limit,windowMs) {
+  const now=Date.now(), b=rateBuckets.get(key)||{start:now,count:0};
+  if(now-b.start>=windowMs){b.start=now;b.count=0;}
+  b.count++; rateBuckets.set(key,b); return b.count<=limit;
+}
+async function audit(req,action,entityType='',entityId='',details='') {
+  try {
+    const a=req.sessionUser||{};
+    await sql`INSERT INTO audit_logs(actor_id,actor_role,action,entity_type,entity_id,details)
+              VALUES(${String(a.id??'')},${String(a.role??'')},${cleanText(action,120)},${cleanText(entityType,80)},${String(entityId)},${cleanText(details,2000)})`;
+  } catch(e){ console.error('audit failed',e); }
+}
+
 
 app.get('/api/health', async (req, res) => {
   try { await initDb(); res.json({ ok: true }); }
@@ -155,6 +250,7 @@ function escapeHtmlServer(s) {
 
 app.post('/api/signup/send-otp', async (req, res) => {
   try {
+    if(!rateLimit(`otp:${req.ip}`,8,15*60*1000)) return res.status(429).json({error:'Too many OTP requests. Please try later.'});
     await initDb();
     const name = String(req.body?.name || '').trim();
     const email = normalizeEmail(req.body?.email);
@@ -208,6 +304,7 @@ app.post('/api/signup/verify-otp', async (req, res) => {
     const rows2 = await sql`INSERT INTO users (name,email,password_hash) VALUES (${pending.name},${pending.email},${pending.password_hash}) RETURNING id,name,email,role,premium_until`;
     const user = rows2[0];
     await sql`DELETE FROM signup_otps WHERE email=${email}`;
+    await ensureWallet(user.id);
     setSession(res, user);
     res.json({ user, token: sessionToken(user) });
   } catch (e) {
@@ -222,6 +319,7 @@ app.post('/api/signup', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
+    if(!rateLimit(`login:${req.ip}`,12,15*60*1000)) return res.status(429).json({error:'Too many login attempts. Please try later.'});
     await initDb();
     const email = normalizeEmail(req.body?.email);
     const password = String(req.body?.password || '');
@@ -236,6 +334,7 @@ app.post('/api/login', async (req, res) => {
     const user = rows[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'Invalid email or password.' });
     delete user.password_hash;
+    await ensureWallet(user.id);
     setSession(res, user);
     res.json({ user, token: sessionToken(user) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Unable to log in.' }); }
@@ -244,79 +343,233 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', (req, res) => { clearSession(res); res.setHeader('Cache-Control', 'no-store'); res.json({ ok: true }); });
 app.get('/api/me', (req, res) => { res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); res.setHeader('Pragma','no-cache'); res.setHeader('Expires','0'); res.json({ user: readSession(req) }); });
 
-app.get('/api/calls', async (req, res) => {
-  try { await initDb(); const rows = await sql`SELECT id,market,type,entry,status,created_at FROM calls ORDER BY id DESC LIMIT 50`; res.json(rows); }
-  catch (e) { console.error(e); res.status(500).json({ error: 'Unable to load calls.' }); }
-});
 
-app.post('/api/payment-request', auth, async (req, res) => {
-  try {
+app.get('/api/calls', async (req,res)=>{
+  try{
     await initDb();
-    if (req.sessionUser.role === 'admin') return res.status(400).json({ error: 'Admin accounts do not need membership.' });
-    const existing = await sql`SELECT id FROM payment_requests WHERE user_id=${req.sessionUser.id} AND status='pending' LIMIT 1`;
-    if (existing.length) return res.json({ ok: true, status: 'pending' });
-    await sql`INSERT INTO payment_requests (user_id,amount) VALUES (${req.sessionUser.id},1499)`;
-    res.json({ ok: true, status: 'pending' });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Unable to submit payment request.' }); }
+    res.json(await sql`SELECT id,market,type,entry,stop_loss,target1,target2,target3,status,asset_type,created_at
+                       FROM calls ORDER BY id DESC LIMIT 100`);
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to load calls.'});}
 });
-
-app.post('/api/calls', admin, async (req, res) => {
-  try {
+app.post('/api/calls',admin,async(req,res)=>{
+  try{
     await initDb();
-    const market = String(req.body?.market || '').trim();
-    const type = String(req.body?.type || '').trim();
-    const entry = String(req.body?.entry || '—').trim();
-    const status = String(req.body?.status || 'Published').trim();
-    if (!market || !type) return res.status(400).json({ error: 'Market and type are required.' });
-    const rows = await sql`INSERT INTO calls (market,type,entry,status) VALUES (${market},${type},${entry},${status}) RETURNING id`;
-    res.json({ id: rows[0].id });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Unable to publish call.' }); }
+    const market=cleanText(req.body?.market,100), type=cleanText(req.body?.type,20);
+    const entry=cleanText(req.body?.entry,100), stop_loss=cleanText(req.body?.stop_loss,100);
+    const target1=cleanText(req.body?.target1,100), target2=cleanText(req.body?.target2,100), target3=cleanText(req.body?.target3,100);
+    const status=cleanText(req.body?.status||'Active',40), asset_type=cleanText(req.body?.asset_type||'Stock',30);
+    if(!market||!entry||!['Buy','Sell'].includes(type)||!['Active','Target Hit','SL Hit','Closed'].includes(status))
+      return res.status(400).json({error:'Invalid call fields.'});
+    const rows=await sql`INSERT INTO calls(market,type,entry,stop_loss,target1,target2,target3,status,asset_type)
+      VALUES(${market},${type},${entry},${stop_loss},${target1},${target2},${target3},${status},${asset_type}) RETURNING *`;
+    await notifyAllUsers('New trading call',`${market} ${type} — Entry ${entry}`,'call');
+    await audit(req,'create_call','call',rows[0].id,`${asset_type} ${market} ${type}`);
+    res.json(rows[0]);
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to publish call.'});}
+});
+app.patch('/api/calls/:id',admin,async(req,res)=>{
+  try{
+    await initDb(); const id=Number(req.params.id);
+    const market=cleanText(req.body?.market,100), type=cleanText(req.body?.type,20), entry=cleanText(req.body?.entry,100);
+    const stop_loss=cleanText(req.body?.stop_loss,100), target1=cleanText(req.body?.target1,100), target2=cleanText(req.body?.target2,100), target3=cleanText(req.body?.target3,100);
+    const status=cleanText(req.body?.status,40), asset_type=cleanText(req.body?.asset_type||'Stock',30);
+    if(!Number.isInteger(id)||!market||!entry||!['Buy','Sell'].includes(type)||!['Active','Target Hit','SL Hit','Closed'].includes(status))
+      return res.status(400).json({error:'Invalid call fields.'});
+    const rows=await sql`UPDATE calls SET market=${market},type=${type},entry=${entry},stop_loss=${stop_loss},target1=${target1},target2=${target2},target3=${target3},status=${status},asset_type=${asset_type} WHERE id=${id} RETURNING *`;
+    if(!rows.length)return res.status(404).json({error:'Call not found.'});
+    await audit(req,'edit_call','call',id,`${asset_type} ${market} ${status}`);
+    res.json(rows[0]);
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to update call.'});}
+});
+app.delete('/api/calls/:id',admin,async(req,res)=>{
+  try{await initDb();const id=Number(req.params.id);await sql`DELETE FROM calls WHERE id=${id}`;await audit(req,'delete_call','call',id);res.json({ok:true});}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to delete call.'});}
 });
 
-app.delete('/api/calls/:id', admin, async (req, res) => {
-  try { await initDb(); await sql`DELETE FROM calls WHERE id=${Number(req.params.id)}`; res.json({ ok: true }); }
-  catch (e) { console.error(e); res.status(500).json({ error: 'Unable to delete call.' }); }
-});
-
-app.get('/api/admin/users', admin, async (req, res) => {
-  try { await initDb(); res.json(await sql`SELECT id,name,email,role,premium_until,created_at FROM users ORDER BY id DESC`); }
-  catch (e) { console.error(e); res.status(500).json({ error: 'Unable to load members.' }); }
-});
-
-app.get('/api/admin/payments', admin, async (req, res) => {
-  try {
+/* Existing membership request */
+app.post('/api/payment-request',auth,async(req,res)=>{
+  try{
     await initDb();
-    res.json(await sql`SELECT p.id,p.amount,p.status,p.created_at,p.reviewed_at,u.name,u.email FROM payment_requests p JOIN users u ON u.id=p.user_id ORDER BY p.id DESC LIMIT 100`);
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Unable to load payments.' }); }
+    if(req.sessionUser.role==='admin')return res.status(400).json({error:'Admin accounts do not need membership.'});
+    const x=await sql`SELECT id FROM payment_requests WHERE user_id=${req.sessionUser.id} AND status='pending' LIMIT 1`;
+    if(x.length)return res.json({ok:true,status:'pending'});
+    await sql`INSERT INTO payment_requests(user_id,amount) VALUES(${req.sessionUser.id},1499)`;
+    res.json({ok:true,status:'pending'});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to submit payment request.'});}
 });
 
-app.post('/api/admin/payments/:id/approve', admin, async (req, res) => {
-  try {
+/* Member wallet/profile/deposit/withdrawal/notification */
+app.get('/api/wallet',auth,async(req,res)=>{
+  try{
+    await initDb();await ensureWallet(req.sessionUser.id);
+    const w=(await sql`SELECT balance FROM wallets WHERE user_id=${req.sessionUser.id}`)[0];
+    const tx=await sql`SELECT id,type,amount,status,reference,description,created_at FROM transactions WHERE user_id=${req.sessionUser.id} ORDER BY id DESC LIMIT 100`;
+    res.json({balance:Number(w?.balance||0),transactions:tx.map(x=>({...x,amount:Number(x.amount)}))});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to load wallet.'});}
+});
+app.get('/api/profile',auth,async(req,res)=>{
+  try{
     await initDb();
-    const id = Number(req.params.id);
-    const rows = await sql`SELECT user_id FROM payment_requests WHERE id=${id} AND status='pending' LIMIT 1`;
-    if (!rows.length) return res.status(404).json({ error: 'Payment request not found or already reviewed.' });
-    await sql`UPDATE payment_requests SET status='approved', reviewed_at=NOW() WHERE id=${id}`;
-    await sql`UPDATE users SET premium_until=(CURRENT_DATE + INTERVAL '30 days')::date WHERE id=${rows[0].user_id}`;
-    res.json({ ok: true });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Unable to approve payment.' }); }
+    const user=(await sql`SELECT id,name,email,role,premium_until,created_at FROM users WHERE id=${req.sessionUser.id}`)[0];
+    const bank=(await sql`SELECT account_name,account_number,ifsc,bank_name FROM bank_details WHERE user_id=${req.sessionUser.id}`)[0]||null;
+    res.json({user,bank});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to load profile.'});}
 });
-
-app.post('/api/admin/payments/:id/reject', admin, async (req, res) => {
-  try { await initDb(); await sql`UPDATE payment_requests SET status='rejected', reviewed_at=NOW() WHERE id=${Number(req.params.id)} AND status='pending'`; res.json({ ok: true }); }
-  catch (e) { console.error(e); res.status(500).json({ error: 'Unable to reject payment.' }); }
+app.post('/api/profile',auth,async(req,res)=>{
+  try{await initDb();const name=cleanText(req.body?.name,100);if(!name)return res.status(400).json({error:'Name is required.'});
+    await sql`UPDATE users SET name=${name} WHERE id=${req.sessionUser.id}`;res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to update profile.'});}
 });
-
-app.post('/api/admin/users/:id/premium', admin, async (req, res) => {
-  try {
+app.post('/api/profile/password',auth,async(req,res)=>{
+  try{
+    if(!rateLimit(`pw:${req.sessionUser.id}`,5,15*60*1000))return res.status(429).json({error:'Too many password changes. Try later.'});
+    await initDb();const current=String(req.body?.current_password||''),next=String(req.body?.new_password||'');
+    if(next.length<8)return res.status(400).json({error:'New password must be at least 8 characters.'});
+    const row=(await sql`SELECT password_hash FROM users WHERE id=${req.sessionUser.id}`)[0];
+    if(!row||!(await bcrypt.compare(current,row.password_hash)))return res.status(401).json({error:'Current password is incorrect.'});
+    await sql`UPDATE users SET password_hash=${await bcrypt.hash(next,12)} WHERE id=${req.sessionUser.id}`;
+    await audit(req,'change_password','user',req.sessionUser.id);res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to change password.'});}
+});
+app.post('/api/profile/bank',auth,async(req,res)=>{
+  try{
     await initDb();
-    const until = String(req.body?.premium_until || '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) return res.status(400).json({ error: 'Use YYYY-MM-DD.' });
-    await sql`UPDATE users SET premium_until=${until} WHERE id=${Number(req.params.id)}`;
-    res.json({ ok: true });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Unable to update membership.' }); }
+    const bank_name=cleanText(req.body?.bank_name,120),account_name=cleanText(req.body?.account_name,120),account_number=cleanText(req.body?.account_number,40),ifsc=cleanText(req.body?.ifsc,20).toUpperCase();
+    if(!bank_name||!account_name||!account_number||!ifsc||!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc))return res.status(400).json({error:'Please enter valid bank details.'});
+    await sql`INSERT INTO bank_details(user_id,account_name,account_number,ifsc,bank_name) VALUES(${req.sessionUser.id},${account_name},${account_number},${ifsc},${bank_name})
+      ON CONFLICT(user_id) DO UPDATE SET account_name=EXCLUDED.account_name,account_number=EXCLUDED.account_number,ifsc=EXCLUDED.ifsc,bank_name=EXCLUDED.bank_name,updated_at=NOW()`;
+    res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to save bank details.'});}
+});
+app.post('/api/deposits',auth,async(req,res)=>{
+  try{
+    if(!rateLimit(`dep:${req.sessionUser.id}`,10,60*60*1000))return res.status(429).json({error:'Too many deposit submissions. Try later.'});
+    await initDb();const amount=Number(req.body?.amount),utr=cleanText(req.body?.utr,100).toUpperCase(),screenshot=String(req.body?.screenshot||'');
+    if(!isValidAmount(amount)||amount<100)return res.status(400).json({error:'Deposit amount must be at least ₹100.'});
+    if(!/^[A-Z0-9][A-Z0-9 ._\/-]{5,80}$/.test(utr))return res.status(400).json({error:'Enter a valid UTR/reference number.'});
+    if(screenshot.length>5_000_000)return res.status(400).json({error:'Screenshot is too large.'});
+    const dup=await sql`SELECT id FROM deposits WHERE utr=${utr} LIMIT 1`;if(dup.length)return res.status(409).json({error:'This UTR has already been submitted.'});
+    const r=await sql`INSERT INTO deposits(user_id,amount,utr,screenshot) VALUES(${req.sessionUser.id},${amount},${utr},${screenshot||null}) RETURNING id,status`;
+    await notifyUser(req.sessionUser.id,'Deposit submitted',`₹${amount.toFixed(2)} deposit is pending admin verification.`,'deposit');
+    await audit(req,'submit_deposit','deposit',r[0].id,`₹${amount} UTR ${utr}`);res.json({ok:true,deposit:r[0]});
+  }catch(e){console.error(e);if(e.code==='23505')return res.status(409).json({error:'This UTR has already been submitted.'});res.status(500).json({error:'Unable to submit deposit.'});}
+});
+app.post('/api/withdrawals',auth,async(req,res)=>{
+  try{
+    if(!rateLimit(`wd:${req.sessionUser.id}`,5,60*60*1000))return res.status(429).json({error:'Too many withdrawal requests. Try later.'});
+    await initDb();const amount=Number(req.body?.amount);if(!isValidAmount(amount)||amount<100)return res.status(400).json({error:'Withdrawal amount must be at least ₹100.'});
+    const bank=(await sql`SELECT account_name,account_number,ifsc,bank_name FROM bank_details WHERE user_id=${req.sessionUser.id}`)[0];
+    if(!bank)return res.status(400).json({error:'Please save your bank details first.'});
+    const p=await sql`SELECT id FROM withdrawals WHERE user_id=${req.sessionUser.id} AND status='pending' LIMIT 1`;if(p.length)return res.status(409).json({error:'You already have a pending withdrawal.'});
+    await ensureWallet(req.sessionUser.id);const w=(await sql`SELECT balance FROM wallets WHERE user_id=${req.sessionUser.id}`)[0];
+    if(Number(w.balance)<amount)return res.status(400).json({error:'Insufficient wallet balance.'});
+    const r=await sql`INSERT INTO withdrawals(user_id,amount,bank_snapshot) VALUES(${req.sessionUser.id},${amount},${JSON.stringify(bank)}) RETURNING id,status`;
+    await notifyUser(req.sessionUser.id,'Withdrawal submitted',`₹${amount.toFixed(2)} withdrawal is pending admin review.`,'withdrawal');
+    await audit(req,'submit_withdrawal','withdrawal',r[0].id,`₹${amount}`);res.json({ok:true,withdrawal:r[0]});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to submit withdrawal.'});}
+});
+app.get('/api/notifications',auth,async(req,res)=>{
+  try{await initDb();res.json(await sql`SELECT id,title,message,kind,read_at,created_at FROM notifications WHERE user_id=${req.sessionUser.id} ORDER BY id DESC LIMIT 100`);}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to load notifications.'});}
+});
+app.post('/api/notifications/read',auth,async(req,res)=>{
+  try{await initDb();await sql`UPDATE notifications SET read_at=NOW() WHERE user_id=${req.sessionUser.id} AND read_at IS NULL`;res.json({ok:true});}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to update notifications.'});}
 });
 
+/* Admin */
+app.get('/api/admin/dashboard',admin,async(req,res)=>{
+  try{
+    await initDb();
+    const users=(await sql`SELECT COUNT(*)::int c FROM users`)[0].c;
+    const wallet=(await sql`SELECT COALESCE(SUM(balance),0) balance FROM wallets`)[0].balance;
+    const pd=(await sql`SELECT COUNT(*)::int c FROM deposits WHERE status='pending'`)[0].c;
+    const pw=(await sql`SELECT COUNT(*)::int c FROM withdrawals WHERE status='pending'`)[0].c;
+    const ac=(await sql`SELECT COUNT(*)::int c FROM calls WHERE status='Active'`)[0].c;
+    const pu=(await sql`SELECT COUNT(*)::int c FROM users WHERE premium_until>=CURRENT_DATE`)[0].c;
+    const recent=await sql`SELECT t.id,t.user_id,u.name,u.email,t.type,t.amount,t.status,t.reference,t.description,t.created_at FROM transactions t JOIN users u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 30`;
+    res.json({users,total_wallet_balance:Number(wallet),pending_deposits:pd,pending_withdrawals:pw,active_calls:ac,premium_users:pu,recent_transactions:recent.map(x=>({...x,amount:Number(x.amount)}))});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to load admin dashboard.'});}
+});
+app.get('/api/admin/deposits',admin,async(req,res)=>{
+  try{await initDb();res.json(await sql`SELECT d.id,d.user_id,u.name,u.email,d.amount,d.utr,d.screenshot,d.status,d.created_at,d.reviewed_at FROM deposits d JOIN users u ON u.id=d.user_id ORDER BY d.id DESC LIMIT 200`);}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to load deposits.'});}
+});
+app.post('/api/admin/deposits/:id/approve',admin,async(req,res)=>{
+  try{
+    await initDb();const id=Number(req.params.id);
+    const d=(await sql`UPDATE deposits SET status='approved',reviewed_at=NOW() WHERE id=${id} AND status='pending' RETURNING id,user_id,amount,utr`)[0];
+    if(!d)return res.status(404).json({error:'Deposit not found or already reviewed.'});
+    await ensureWallet(d.user_id);
+    await sql`UPDATE wallets SET balance=balance+${d.amount},updated_at=NOW() WHERE user_id=${d.user_id}`;
+    await sql`INSERT INTO transactions(user_id,type,amount,status,reference,description) VALUES(${d.user_id},'credit',${d.amount},'completed',${`DEP-${d.id}`},'Deposit approved') ON CONFLICT(reference) DO NOTHING`;
+    await notifyUser(d.user_id,'Deposit approved',`₹${Number(d.amount).toFixed(2)} has been credited to your wallet.`,'deposit');
+    await audit(req,'approve_deposit','deposit',id,`₹${d.amount} UTR ${d.utr}`);res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to approve deposit.'});}
+});
+app.post('/api/admin/deposits/:id/reject',admin,async(req,res)=>{
+  try{await initDb();const id=Number(req.params.id);
+    const d=(await sql`UPDATE deposits SET status='rejected',reviewed_at=NOW() WHERE id=${id} AND status='pending' RETURNING user_id,amount`)[0];
+    if(!d)return res.status(404).json({error:'Deposit not found or already reviewed.'});
+    await notifyUser(d.user_id,'Deposit rejected',`Your ₹${Number(d.amount).toFixed(2)} deposit was rejected.`,'deposit');
+    await audit(req,'reject_deposit','deposit',id);res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to reject deposit.'});}
+});
+app.get('/api/admin/withdrawals',admin,async(req,res)=>{
+  try{await initDb();const r=await sql`SELECT w.id,w.user_id,u.name,u.email,w.amount,w.bank_snapshot,w.status,w.created_at,w.reviewed_at FROM withdrawals w JOIN users u ON u.id=w.user_id ORDER BY w.id DESC LIMIT 200`;res.json(r.map(x=>({...x,amount:Number(x.amount)})));}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to load withdrawals.'});}
+});
+app.post('/api/admin/withdrawals/:id/approve',admin,async(req,res)=>{
+  try{
+    await initDb();const id=Number(req.params.id);
+    const w=(await sql`SELECT id,user_id,amount FROM withdrawals WHERE id=${id} AND status='pending' LIMIT 1`)[0];
+    if(!w)return res.status(404).json({error:'Withdrawal not found or already reviewed.'});
+    await ensureWallet(w.user_id);
+    const debited=await sql`UPDATE wallets SET balance=balance-${w.amount},updated_at=NOW() WHERE user_id=${w.user_id} AND balance>=${w.amount} RETURNING balance`;
+    if(!debited.length)return res.status(400).json({error:'Insufficient wallet balance.'});
+    const changed=await sql`UPDATE withdrawals SET status='approved',reviewed_at=NOW() WHERE id=${id} AND status='pending' RETURNING id`;
+    if(!changed.length){await sql`UPDATE wallets SET balance=balance+${w.amount},updated_at=NOW() WHERE user_id=${w.user_id}`;return res.status(409).json({error:'Withdrawal was already reviewed.'});}
+    await sql`INSERT INTO transactions(user_id,type,amount,status,reference,description) VALUES(${w.user_id},'debit',${w.amount},'completed',${`WD-${w.id}`},'Withdrawal approved') ON CONFLICT(reference) DO NOTHING`;
+    await notifyUser(w.user_id,'Withdrawal approved',`₹${Number(w.amount).toFixed(2)} has been deducted from your wallet.`,'withdrawal');
+    await audit(req,'approve_withdrawal','withdrawal',id,`₹${w.amount}`);res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to approve withdrawal.'});}
+});
+app.post('/api/admin/withdrawals/:id/reject',admin,async(req,res)=>{
+  try{await initDb();const id=Number(req.params.id);
+    const w=(await sql`UPDATE withdrawals SET status='rejected',reviewed_at=NOW() WHERE id=${id} AND status='pending' RETURNING user_id,amount`)[0];
+    if(!w)return res.status(404).json({error:'Withdrawal not found or already reviewed.'});
+    await notifyUser(w.user_id,'Withdrawal rejected',`Your ₹${Number(w.amount).toFixed(2)} withdrawal was rejected. Wallet was not debited.`,'withdrawal');
+    await audit(req,'reject_withdrawal','withdrawal',id);res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Unable to reject withdrawal.'});}
+});
+app.post('/api/admin/broadcast',admin,async(req,res)=>{
+  try{await initDb();const title=cleanText(req.body?.title,120),message=cleanText(req.body?.message,1000);if(!title||!message)return res.status(400).json({error:'Title and message are required.'});await notifyAllUsers(title,message);await audit(req,'broadcast_notification','notification','',title);res.json({ok:true});}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to send broadcast.'});}
+});
+app.get('/api/admin/audit',admin,async(req,res)=>{
+  try{await initDb();res.json(await sql`SELECT id,actor_id,actor_role,action,entity_type,entity_id,details,created_at FROM audit_logs ORDER BY id DESC LIMIT 200`);}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to load audit log.'});}
+});
+app.get('/api/admin/users',admin,async(req,res)=>{
+  try{await initDb();res.json(await sql`SELECT id,name,email,role,premium_until,created_at FROM users ORDER BY id DESC`);}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to load members.'});}
+});
+app.get('/api/admin/payments',admin,async(req,res)=>{
+  try{await initDb();res.json(await sql`SELECT p.id,p.amount,p.status,p.created_at,p.reviewed_at,u.name,u.email FROM payment_requests p JOIN users u ON u.id=p.user_id ORDER BY p.id DESC LIMIT 100`);}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to load payments.'});}
+});
+app.post('/api/admin/payments/:id/approve',admin,async(req,res)=>{
+  try{await initDb();const id=Number(req.params.id);const r=(await sql`UPDATE payment_requests SET status='approved',reviewed_at=NOW() WHERE id=${id} AND status='pending' RETURNING user_id`)[0];if(!r)return res.status(404).json({error:'Payment request not found or already reviewed.'});await sql`UPDATE users SET premium_until=(CURRENT_DATE+INTERVAL '30 days')::date WHERE id=${r.user_id}`;await notifyUser(r.user_id,'Premium activated','Your premium membership has been activated for 30 days.','premium');res.json({ok:true});}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to approve payment.'});}
+});
+app.post('/api/admin/payments/:id/reject',admin,async(req,res)=>{
+  try{await initDb();const id=Number(req.params.id);const r=(await sql`UPDATE payment_requests SET status='rejected',reviewed_at=NOW() WHERE id=${id} AND status='pending' RETURNING user_id`)[0];if(!r)return res.status(404).json({error:'Payment request not found or already reviewed.'});await notifyUser(r.user_id,'Premium payment rejected','Your premium payment request was rejected.','premium');res.json({ok:true});}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to reject payment.'});}
+});
+app.post('/api/admin/users/:id/premium',admin,async(req,res)=>{
+  try{await initDb();const until=String(req.body?.premium_until||'').trim();if(!/^\d{4}-\d{2}-\d{2}$/.test(until))return res.status(400).json({error:'Use YYYY-MM-DD.'});const id=Number(req.params.id);await sql`UPDATE users SET premium_until=${until} WHERE id=${id}`;await notifyUser(id,'Membership updated',`Your premium membership expiry is now ${until}.`,'premium');res.json({ok:true});}
+  catch(e){console.error(e);res.status(500).json({error:'Unable to update membership.'});}
+});
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 
 // Vercel runs this Express app as a serverless function. Keep listen() only for local development.
