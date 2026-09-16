@@ -1,5 +1,5 @@
 # BEST TRADERS TEAM — Vercel + Neon + Brevo Email OTP
-
+otp deploy update
 This version keeps the working Postgres/Neon authentication and adds email verification for account creation using Brevo transactional email API.
 
 ## Vercel environment variables
