@@ -364,7 +364,7 @@ app.post('/api/calls',admin,async(req,res)=>{
     const chart_data=String(req.body?.chart_data||'').slice(0,200000);
     if(!market||!entry||!['Buy','Sell'].includes(type)||!['Active','Target Hit','SL Hit','Closed'].includes(status))
       return res.status(400).json({error:'Invalid call fields.'});
-    const rows=await sql`INSERT INTO calls(market,type,entry,stop_loss,target1,target2,target3,status,asset_type)
+    const rows=await sql`INSERT INTO calls(market,type,entry,stop_loss,target1,target2,target3,status,asset_type,chart_data)
       VALUES(${market},${type},${entry},${stop_loss},${target1},${target2},${target3},${status},${asset_type},${chart_data}) RETURNING *`;
     await notifyAllUsers('New trading call',`${market} ${type} — Entry ${entry}`,'call');
     await audit(req,'create_call','call',rows[0].id,`${asset_type} ${market} ${type}`);
